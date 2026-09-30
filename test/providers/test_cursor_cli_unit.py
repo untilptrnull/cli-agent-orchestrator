@@ -767,6 +767,13 @@ class TestBuildCommand:
         servers = manifest["mcpServers"]
         assert "cao-mcp-server" in servers
         assert servers["cao-mcp-server"]["env"]["CAO_TERMINAL_ID"] == "test-tid"
+        # Cursor CLI only loads a named manifest under .cursor-plugin/;
+        # without it the session silently has no cao-mcp-server.
+        cursor_manifest = json.loads(
+            (plugin_dir / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        assert cursor_manifest["name"]
+        assert cursor_manifest["mcpServers"] == servers
 
     @patch("cli_agent_orchestrator.providers.cursor_cli.load_agent_profile")
     def test_mcp_resolves_bundled_command_in_manifest(self, mock_load):

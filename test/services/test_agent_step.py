@@ -753,6 +753,52 @@ class TestIdleCompletionSignal:
             result = asyncio.run(run_agent_step("kiro_cli", "dev", "x"))
         assert result.status == TerminalStatus.COMPLETED
 
+    def test_opted_in_provider_ignores_completed_before_any_work(self):
+        """Cursor CLI's idle input box reads COMPLETED right after the send;
+        for a provider that opts in, that must not resolve the step."""
+        provider = MagicMock(completed_requires_observed_working=True)
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
+            final_status=TerminalStatus.COMPLETED,  # stale, never worked
+        )
+        with (
+            create,
+            send,
+            delete,
+            get_output,
+            exit_cli,
+            wait,
+            status,
+            patch(f"{_MODULE}.provider_manager.get_provider", return_value=provider),
+        ):
+            with pytest.raises(StepExecutionError, match="did not complete") as exc_info:
+                asyncio.run(run_agent_step("cursor_cli", "dev", "x", timeout=0))
+        assert exc_info.value.kind == "timeout"
+
+    def test_opted_in_provider_resolves_completed_after_work(self):
+        provider = MagicMock(completed_requires_observed_working=True)
+        seq = [
+            TerminalStatus.COMPLETED,  # stale pre-pickup read
+            TerminalStatus.PROCESSING,
+            TerminalStatus.COMPLETED,
+        ]
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
+            status_sequence=seq,
+        )
+        with (
+            create,
+            send,
+            delete,
+            get_output,
+            exit_cli,
+            wait,
+            status,
+            patch(f"{_MODULE}.provider_manager.get_provider", return_value=provider),
+            patch(f"{_MODULE}._COMPLETION_POLL_INTERVAL", 0.01),
+        ):
+            result = asyncio.run(run_agent_step("cursor_cli", "dev", "x", timeout=5))
+        assert result.status == TerminalStatus.COMPLETED
+        assert result.last_message == "the answer"
+
     def test_idle_before_any_work_does_not_resolve_early(self):
         """A bare IDLE with NO prior working state is the pre-pickup window, not
         done: it must NOT resolve. Here IDLE persists but the agent was never

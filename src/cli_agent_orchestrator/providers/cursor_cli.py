@@ -200,6 +200,10 @@ class CursorCliProvider(BaseProvider):
         _model: Optional model override forwarded as ``--model``.
     """
 
+    # The v2026 TUI's "Add a follow-up" input box reads as COMPLETED both
+    # after a turn and in the window right after a new prompt is sent.
+    completed_requires_observed_working = True
+
     def __init__(
         self,
         terminal_id: str,
@@ -515,16 +519,17 @@ class CursorCliProvider(BaseProvider):
                 env["CAO_TERMINAL_ID"] = self.terminal_id
                 servers[server_name]["env"] = env
 
-        # Cursor v2026 plugin manifests are JSON files inside the
-        # plugin dir. The exact schema is undocumented in the help
-        # text we captured; the minimum that the CLI accepts is a
-        # ``mcpServers`` object matching the well-known MCP config
-        # layout, written as ``plugin.json`` at the root. If the
-        # schema proves more strict in a later v2026 point release
-        # this layout can be tweaked without touching the rest of
-        # the provider.
-        manifest = {"mcpServers": servers}
-        (plugin_dir / "plugin.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        # Cursor CLI (verified on v2026.09.28) only loads a plugin whose
+        # manifest lives at ``.cursor-plugin/plugin.json`` and carries a
+        # ``name``; a bare root ``plugin.json`` is silently ignored, which
+        # leaves the session without cao-mcp-server. The root copy is kept
+        # for older v2026 builds that read it.
+        manifest = {"name": "cao", "mcpServers": servers}
+        manifest_text = json.dumps(manifest, indent=2)
+        cursor_manifest_dir = plugin_dir / ".cursor-plugin"
+        cursor_manifest_dir.mkdir(exist_ok=True)
+        (cursor_manifest_dir / "plugin.json").write_text(manifest_text, encoding="utf-8")
+        (plugin_dir / "plugin.json").write_text(manifest_text, encoding="utf-8")
         self._register_tmp_path(plugin_dir)
         return str(plugin_dir)
 

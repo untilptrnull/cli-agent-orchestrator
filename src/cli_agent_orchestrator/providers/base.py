@@ -234,6 +234,14 @@ class BaseProvider(ABC):
     # never probed: the terminal keeps the status the edges give it.
     supports_midburst_processing_probe: bool = False
 
+    # Opt-in for providers whose idle input box is indistinguishable from a
+    # finished turn, so get_status() reads COMPLETED before a freshly sent prompt
+    # is picked up. When True, the post-input step wait only accepts COMPLETED
+    # after the agent was observed working. Providers with a definitive done
+    # marker leave this False so a turn that finishes between polls still
+    # resolves immediately.
+    completed_requires_observed_working: bool = False
+
     def probe_processing_from_screen(self, screen_lines: List[str]) -> bool:
         """Report whether this half-drawn frame shows the agent actively working.
 

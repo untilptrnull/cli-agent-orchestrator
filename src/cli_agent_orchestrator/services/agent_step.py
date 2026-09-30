@@ -32,6 +32,7 @@ from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.kiro_capabilities import KiroPhase0KASError
+from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import frozen_run_memory, terminal_service
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 from cli_agent_orchestrator.services.step_fingerprint import StepCallFields, compute
@@ -156,6 +157,15 @@ class StepCancelledError(Exception):
         self.terminal_id = terminal_id
 
 
+def _completed_requires_observed_working(terminal_id: str) -> bool:
+    """Whether this terminal's provider opts into gating COMPLETED on observed work."""
+    try:
+        provider = provider_manager.get_provider(terminal_id)
+    except Exception:
+        return False
+    return bool(getattr(provider, "completed_requires_observed_working", False))
+
+
 async def _wait_for_completion(
     terminal_id: str,
     timeout: float,
@@ -170,7 +180,9 @@ async def _wait_for_completion(
 
     Completion signals (issue #409a):
 
-    - ``COMPLETED`` — definitive done marker; returns immediately (unchanged).
+    - ``COMPLETED`` — definitive done marker; returns immediately, unless the
+      provider sets ``completed_requires_observed_working`` (its idle input box
+      reads as COMPLETED), in which case it counts only after observed work.
     - ``IDLE`` — accepted as done ONLY after the agent was observed working (a
       ``PROCESSING`` / ``WAITING_USER_ANSWER`` read) AND IDLE then persists for
       ``_IDLE_STABLE_POLLS`` consecutive polls. This is the codex-style case where
@@ -209,6 +221,9 @@ async def _wait_for_completion(
         StepCancelledError: ``cancel_event`` fired while waiting.
     """
     deadline = time.monotonic() + timeout
+    completed_requires_working = await asyncio.to_thread(
+        _completed_requires_observed_working, terminal_id
+    )
     observed_working = False
     consecutive_idle = 0
     redeliveries = 0
@@ -233,8 +248,10 @@ async def _wait_for_completion(
                 terminal_id=terminal_id,
             )
         if current == TerminalStatus.COMPLETED:
-            return
-        if current == TerminalStatus.IDLE:
+            if observed_working or not completed_requires_working:
+                return
+            consecutive_idle = 0
+        elif current == TerminalStatus.IDLE:
             # Post-input IDLE only counts once the agent has actually started
             # working — otherwise the idle-before-processing window right after
             # the send would settle immediately with empty/partial output.
